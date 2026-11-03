@@ -192,8 +192,8 @@ The System Status tab (and `GET /api/status`) shows which mode is running.
 
 ```bash
 # 1. Get the code (or download the ZIP from GitHub and unzip it)
-git clone https://github.com/mayank953/meridian-ai-learner.git
-cd meridian-ai-learner
+git clone https://github.com/kalyai1322005/meridian-ai.git
+cd meridian-ai
 
 # 2. Make a private Python environment and install the packages
 python3.12 -m venv .venv
@@ -276,6 +276,60 @@ You do need it for these reasons:
 | **Scaling** | Many users at once? The cloud can start more copies. |
 
 **It costs money.** The vector database is billed **by the hour while it is running, even if nobody uses it.** New Google Cloud customers get a **$300 credit for 90 days**. [DEPLOY.md](DEPLOY.md) explains the costs, how to set a budget alert, and how to switch everything off.
+
+---
+
+## Troubleshooting: Cloud Run service deploys but isn't publicly reachable
+
+If `gcloud run deploy` succeeds but visiting the service URL returns a 403 /
+"Forbidden your client does not have permission", it's almost always an IAM
+problem, not a deploy problem — and it's a confusing one because
+`--allow-unauthenticated` is *already* on the deploy command.
+
+**Why the flag alone isn't enough:** setting that flag requires the deploying
+identity to hold the `run.services.setIamPolicy` permission. That permission
+is only included in `roles/owner` and `roles/run.admin` — **not** in
+`roles/editor`. If your `github-deployer` service account has `roles/editor`
+(the common starting point), `gcloud run deploy --allow-unauthenticated` can
+report success while silently failing to attach the public-access policy, and
+the service stays locked down.
+
+**The fix** (already in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)):
+a final `Allow Public Access to Cloud Run` step that:
+1. Grants the deployer service account `roles/run.admin` on the project
+   (it can do this to itself because it already has
+   `roles/resourcemanager.projectIamAdmin`).
+2. Explicitly binds `allUsers` to `roles/run.invoker` on the service.
+3. Prints the resulting IAM policy so the Actions log confirms it worked.
+
+This runs automatically on every push to `main` — no manual console step
+needed.
+
+### Other permission gaps this workflow now handles
+
+Earlier runs could also fail partway through for the same underlying reason
+(basic roles don't include `setIamPolicy`/`addIamPolicyBinding` on
+specific resources):
+
+| Step | Problem it fixes |
+|---|---|
+| Secret Manager Admin self-grant | `roles/editor` can create a secret but can't set that secret's own IAM policy |
+| Project-wide `secretAccessor` grant | Replaces a per-secret grant that hits the same `setIamPolicy` wall |
+| Cloud Build builder role + 60s wait | Newer GCP projects don't grant the default compute service account Cloud Build permissions automatically |
+| Vertex AI + Storage runtime grants | The Cloud Run service's own identity (the default compute SA) has no roles by default — it needs `aiplatform.user` and `storage.objectAdmin` to actually serve requests |
+
+### If a run still fails on an IAM step
+
+Those steps assume `github-deployer@meridian-ai-511611.iam.gserviceaccount.com`
+already has `roles/editor` and `roles/resourcemanager.projectIamAdmin` at the
+project level (that's what lets it grant itself the extra roles above). If a
+step fails with `PERMISSION_DENIED`, check those two roles are actually
+attached to the service account in IAM & Admin → IAM, rather than re-running
+the workflow repeatedly.
+
+*Workflow also hardened with a `concurrency` guard (no overlapping deploys)
+and explicit failure detection in the Vector Search index-deployment step
+(previously a failed deploy could pass silently after a 45-minute wait).*
 
 ---
 
