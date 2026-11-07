@@ -3,7 +3,7 @@ __pycache__/
 *.py[codz]
 *$py.class
 
-# Environment & credentials (injected via Cloud Run env vars / Secret Manager)
+# Environment & credentials (injected via ECS environment variables / AWS Secrets Manager)
 .env
 .env.*
 credentials/

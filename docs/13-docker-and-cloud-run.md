@@ -1,5 +1,7 @@
 # 13 · Docker and Cloud Run
 
+> **Note:** parts of this page were written for the project's original Google Cloud setup. The project now runs on AWS (Amazon S3 Vectors, S3, Bedrock, ECS Express Mode). Where this page says Vertex AI, Cloud Storage/GCS, Cloud Run, Secret Manager or `gcloud`, read the AWS equivalent; [DEPLOY.md](../DEPLOY.md) and `infra/aws-bootstrap.yaml` are the up-to-date source.
+
 How the app is packed into a box and run on the internet.
 
 ---

@@ -1,7 +1,7 @@
 """Where the ORIGINAL PDF files are kept. Which place depends on APP_MODE.
 
     local  -> a folder on your disk:      .meridian/uploads/
-    cloud  -> a Cloud Storage bucket:     gs://<GCS_BUCKET_NAME>/<GCS_PREFIX>
+    cloud  -> an Amazon S3 bucket:        s3://<S3_BUCKET_NAME>/<S3_PREFIX>
 
 Two operations are all the app needs:
     save(local_path, filename)  keep a copy of an uploaded PDF
@@ -21,25 +21,25 @@ from logger import GLOBAL_LOGGER as log
 def location() -> str:
     """Human-readable location, shown on the System Status tab."""
     if settings.is_cloud:
-        return f"gs://{settings.GCS_BUCKET_NAME}/{settings.GCS_PREFIX}"
+        return f"s3://{settings.S3_BUCKET_NAME}/{settings.S3_PREFIX}"
     return settings.local_upload_dir
 
 
-def _bucket():
-    if not settings.GCS_BUCKET_NAME:
-        raise ConfigurationError("APP_MODE=cloud needs GCS_BUCKET_NAME.")
-    from google.cloud import storage
+def _s3():
+    if not settings.S3_BUCKET_NAME:
+        raise ConfigurationError("APP_MODE=cloud needs S3_BUCKET_NAME.")
+    import boto3  # only needed (and imported) in cloud mode
 
-    return storage.Client(project=settings.GCP_PROJECT or None).bucket(settings.GCS_BUCKET_NAME)
+    return boto3.client("s3", region_name=settings.AWS_REGION)
 
 
 def save(local_path: str, filename: str) -> str:
     """Keep a copy of the uploaded PDF. Returns where it was stored."""
     filename = os.path.basename(filename)
     if settings.is_cloud:
-        blob_name = f"{settings.GCS_PREFIX}{filename}"
-        _bucket().blob(blob_name).upload_from_filename(local_path, content_type="application/pdf")
-        stored_at = f"gs://{settings.GCS_BUCKET_NAME}/{blob_name}"
+        key = f"{settings.S3_PREFIX}{filename}"
+        _s3().upload_file(local_path, settings.S3_BUCKET_NAME, key, ExtraArgs={"ContentType": "application/pdf"})
+        stored_at = f"s3://{settings.S3_BUCKET_NAME}/{key}"
     else:
         os.makedirs(settings.local_upload_dir, exist_ok=True)
         stored_at = os.path.join(settings.local_upload_dir, filename)
@@ -68,12 +68,17 @@ def pdfs() -> Iterator[Iterator[tuple[str, str]]]:
     tmp_dir = tempfile.mkdtemp()
     try:
         def _download() -> Iterator[tuple[str, str]]:
-            for blob in _bucket().list_blobs(prefix=settings.GCS_PREFIX):
-                if not blob.name.lower().endswith(".pdf"):
-                    continue
-                path = os.path.join(tmp_dir, os.path.basename(blob.name))
-                blob.download_to_filename(path)
-                yield path, f"gs://{settings.GCS_BUCKET_NAME}/{blob.name}"
+            s3 = _s3()
+            for page in s3.get_paginator("list_objects_v2").paginate(
+                Bucket=settings.S3_BUCKET_NAME, Prefix=settings.S3_PREFIX
+            ):
+                for obj in page.get("Contents", []):
+                    key = obj["Key"]
+                    if not key.lower().endswith(".pdf"):
+                        continue
+                    path = os.path.join(tmp_dir, os.path.basename(key))
+                    s3.download_file(settings.S3_BUCKET_NAME, key, path)
+                    yield path, f"s3://{settings.S3_BUCKET_NAME}/{key}"
 
         yield _download()
     finally:

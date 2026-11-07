@@ -1,5 +1,7 @@
 # 06 · The frontend, file by file
 
+> **Note:** parts of this page were written for the project's original Google Cloud setup. The project now runs on AWS (Amazon S3 Vectors, S3, Bedrock, ECS Express Mode). Where this page says Vertex AI, Cloud Storage/GCS, Cloud Run, Secret Manager or `gcloud`, read the AWS equivalent; [DEPLOY.md](../DEPLOY.md) and `infra/aws-bootstrap.yaml` are the up-to-date source.
+
 The frontend is the **screen**: what you see and click, running in your browser. It is built with **React** (a library for making screens out of reusable parts), **TypeScript** (JavaScript with checks), **Vite** (a tool that builds and serves it), **Tailwind CSS** (styling with short class names) and **shadcn/ui** (ready-made buttons and cards).
 
 You do **not** need to know React to understand this project. What matters is how the screen **talks to the backend**.

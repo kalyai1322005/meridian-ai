@@ -34,7 +34,7 @@ COPY backend/ ./backend/
 # Copy built frontend static files from the frontend-builder stage
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
-# Expose the single port Cloud Run / local test will use
+# Expose the single port ECS Express Mode / local test will use
 EXPOSE 8080
 
 # Start the application using Uvicorn

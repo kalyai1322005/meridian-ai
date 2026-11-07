@@ -6,7 +6,7 @@
     /api/rag/ask       - ask a question about the ingested documents  (rag/retrieval.py)
     /api/rag/upload    - upload PDFs and index them                   (rag/data_ingestion.py)
     /api/rag/ingest    - index every PDF already in the document store
-                         (local folder or GCS bucket, depending on APP_MODE)
+                         (local folder or S3 bucket, depending on APP_MODE)
 
 Errors: our own exceptions (exceptions/) are turned into clear HTTP answers in api/main.py,
 so the routes only catch what they can explain better themselves.
@@ -58,7 +58,7 @@ def health():
 
 @status_router.get("/status")
 def system_status():
-    """Return system configuration and health information (makes no calls to Google)."""
+    """Return system configuration and health information (makes no calls to AWS or Google)."""
     uptime_seconds = int((datetime.now(timezone.utc) - _server_start_time).total_seconds())
     hours, remainder = divmod(uptime_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -72,27 +72,27 @@ def system_status():
             "python_version": sys.version.split()[0],
             "platform": platform.system(),
         },
-        "gcp": {
-            "project_id": settings.GCP_PROJECT if cloud else "not used (local mode)",
-            "region": settings.GCP_REGION if cloud else "-",
+        "aws": {
+            "region": settings.AWS_REGION if cloud else "-",
         },
         "storage": {
             "location": document_store.location(),
-            "gcs_bucket": settings.GCS_BUCKET_NAME if cloud else "-",
-            "gcs_prefix": settings.GCS_PREFIX if cloud else "-",
+            "s3_bucket": settings.S3_BUCKET_NAME if cloud else "-",
+            "s3_prefix": settings.S3_PREFIX if cloud else "-",
         },
         "vector_search": {
-            "backend": "Vertex AI Vector Search" if cloud else "Chroma (local disk)",
-            "index_id": (settings.vector_search_index_id or "NA") if cloud else settings.chroma_dir,
-            "endpoint_id": (settings.vector_search_index_endpoint_id or "NA") if cloud else "-",
-            "stream_update": cloud,
+            "backend": "Amazon S3 Vectors" if cloud else "Chroma (local disk)",
+            "index_id": (settings.s3_vectors_index_name or "NA") if cloud else settings.chroma_dir,
+            "vector_bucket": (settings.s3_vectors_bucket_name or "NA") if cloud else "-",
         },
         "models": {
             "embedding": settings.embedding_model_name if cloud else settings.local_embedding_model_name,
-            "llm": settings.llm_model_name,
+            "llm": settings.bedrock_llm_model_id if settings.llm_provider == "bedrock" else settings.llm_model_name,
             "llm_framework": (
-                "Gemini API (chat) + Vertex AI (embeddings) via LangChain v1" if cloud
-                else "Gemini API (chat + embeddings) via LangChain v1"
+                ("Amazon Bedrock (chat)" if settings.llm_provider == "bedrock" else "Gemini API (chat)")
+                + " + Amazon Bedrock (embeddings) via LangChain v1" if cloud
+                else ("Amazon Bedrock (chat)" if settings.llm_provider == "bedrock" else "Gemini API (chat)")
+                + " + Gemini API (embeddings) via LangChain v1"
             ),
         },
         "ingestion": {
@@ -154,7 +154,7 @@ async def upload_documents(files: list[UploadFile] = File(...)):
             with open(local_path, "wb") as f:
                 f.write(await upload.read())
 
-            # Keep the original PDF (local folder or GCS). Indexing still works if this fails.
+            # Keep the original PDF (local folder or S3). Indexing still works if this fails.
             try:
                 await run_in_threadpool(document_store.save, local_path, filename)
             except Exception as store_err:
@@ -190,9 +190,9 @@ def list_uploads():
 
 
 @rag_router.post("/ingest")
-@rag_router.post("/ingest-gcs", include_in_schema=False)  # old name, kept so older frontends still work
+@rag_router.post("/ingest-gcs", include_in_schema=False)  # old name, kept so older frontends still work (it now reads from S3 in cloud mode)
 def trigger_store_ingestion():
-    """Index every PDF already in the document store (local folder or GCS bucket)."""
+    """Index every PDF already in the document store (local folder or S3 bucket)."""
     try:
         totals = ingest_stored_pdfs()
         return {"status": f"Ingestion complete ({settings.app_mode} mode)", **totals}

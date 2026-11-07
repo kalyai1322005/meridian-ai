@@ -8,9 +8,9 @@ Interactive API docs: http://localhost:8080/docs
 Exposes REST endpoints for:
   1. Running multi-agent procurement audits       (agent/agents.py)
   2. Uploading documents into the vector store       (rag/data_ingestion.py)
-     APP_MODE=local -> Chroma on disk, APP_MODE=cloud -> Vertex AI Vector Search
+     APP_MODE=local -> Chroma on disk, APP_MODE=cloud -> Amazon S3 Vectors
   3. Querying the RAG pipeline                    (rag/retrieval.py)
-In Docker / Cloud Run the same server also serves the built React app.
+In Docker / ECS Express Mode the same server also serves the built React app.
 """
 import os
 from contextlib import asynccontextmanager
@@ -31,8 +31,8 @@ from logger import GLOBAL_LOGGER as log
 async def lifespan(app: FastAPI):
     log.info("Meridian AI starting", mode=settings.app_mode, llm=settings.llm_model_name)
     yield  # the app runs here
-    # Shutdown (cloud mode only): flush logs to GCS, because Cloud Run's disk disappears
-    _LOGGER_INSTANCE.flush_to_gcs()
+    # Shutdown (cloud mode only): flush logs to S3, because the container's disk disappears
+    _LOGGER_INSTANCE.flush_to_s3()
 
 
 app = FastAPI(

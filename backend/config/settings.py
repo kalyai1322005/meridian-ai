@@ -6,12 +6,12 @@ THE LOCAL <-> CLOUD TOGGLE
                                 Vectors  -> Chroma, saved in ./.meridian/chroma
                                 Files    -> ./.meridian/uploads
                                 Embeddings -> Gemini API (API key)
-                                No Google Cloud project, bucket or service account needed.
+                                No AWS account, bucket or credentials needed.
 
-    APP_MODE=cloud              Runs against Google Cloud (what Cloud Run uses).
-                                Vectors  -> Vertex AI Vector Search
-                                Files    -> Cloud Storage bucket
-                                Embeddings -> Vertex AI (Google Cloud credentials)
+    APP_MODE=cloud              Runs against AWS (what ECS Express Mode uses).
+                                Vectors  -> Amazon S3 Vectors
+                                Files    -> Amazon S3 bucket
+                                Embeddings -> Amazon Bedrock (Titan Text Embeddings V2)
 
 Every module that touches storage asks `settings.is_cloud` instead of guessing,
 so switching mode is one line in .env.
@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Project root = two levels above backend/config/
@@ -36,16 +36,27 @@ class Settings(BaseSettings):
     # --- The toggle ---
     app_mode: Literal["local", "cloud"] = Field("local", validation_alias="APP_MODE")
 
-    # --- Gemini (used in BOTH modes for the chat model) ---
+    # --- Chat model ---
+    # "gemini" (default): Gemini API with GOOGLE_API_KEY, works in BOTH modes.
+    # "bedrock": Amazon Bedrock (Converse API) using AWS credentials, set BEDROCK_LLM_MODEL_ID.
+    llm_provider: Literal["gemini", "bedrock"] = Field("gemini", validation_alias="LLM_PROVIDER")
     GOOGLE_API_KEY: str = Field("", validation_alias="GOOGLE_API_KEY")
-    llm_model_name: str = Field("gemini-3.8-flash", validation_alias="VERTEX_LLM_MODEL_NAME")
+    # VERTEX_LLM_MODEL_NAME is the old name of this setting; it still works.
+    llm_model_name: str = Field(
+        "gemini-3.8-flash", validation_alias=AliasChoices("LLM_MODEL_NAME", "VERTEX_LLM_MODEL_NAME")
+    )
+    bedrock_llm_model_id: str = Field("", validation_alias="BEDROCK_LLM_MODEL_ID")
     # 0 = most repeatable answers. If the model loops or repeats itself, try 1.0 (Gemini 3 default)
     llm_temperature: float = Field(0.0, validation_alias="LLM_TEMPERATURE")
 
     # --- Embeddings ---
-    # Cloud: Vertex AI model. Must output 768 dims to match the Vector Search index.
-    embedding_model_name: str = Field("text-embedding-005", validation_alias="VERTEX_EMBEDDING_MODEL_NAME")
-    # Local: Gemini API model (API key). Chroma has no fixed size, 768 keeps both modes alike.
+    # Cloud: Amazon Titan Text Embeddings V2 on Bedrock (supports 256, 512 or 1024 dimensions).
+    # The S3 Vectors index is created with this size and can never change afterwards.
+    embedding_model_name: str = Field(
+        "amazon.titan-embed-text-v2:0", validation_alias=AliasChoices("BEDROCK_EMBEDDING_MODEL_ID", "EMBEDDING_MODEL_NAME")
+    )
+    cloud_embedding_dimensions: int = Field(1024, validation_alias="BEDROCK_EMBEDDING_DIMENSIONS")
+    # Local: Gemini API model (API key). Chroma has no fixed size.
     local_embedding_model_name: str = Field("gemini-embedding-001", validation_alias="LOCAL_EMBEDDING_MODEL_NAME")
     embedding_dimensions: int = 768
 
@@ -53,14 +64,14 @@ class Settings(BaseSettings):
     local_data_dir: str = Field(str(PROJECT_ROOT / ".meridian"), validation_alias="LOCAL_DATA_DIR")
     chroma_collection: str = Field("meridian_docs", validation_alias="CHROMA_COLLECTION")
 
-    # --- Cloud mode (GCP) ---
-    GCP_PROJECT: str = Field("", validation_alias="GCP_PROJECT_ID")
-    GCP_REGION: str = Field("us-central1", validation_alias="GCP_REGION")
-    GCS_BUCKET_NAME: str = Field("", validation_alias="GCS_BUCKET_NAME")
-    GCS_PREFIX: str = Field("uploads/", validation_alias="GCS_PREFIX")
-    gcp_service_account_path: str = Field("", validation_alias="GCP_SERVICE_ACCOUNT_PATH")
-    vector_search_index_id: str = Field("", validation_alias="VECTOR_SEARCH_INDEX_ID")
-    vector_search_index_endpoint_id: str = Field("", validation_alias="VECTOR_SEARCH_INDEX_ENDPOINT_ID")
+    # --- Cloud mode (AWS) ---
+    # Credentials are NOT settings: boto3 finds them itself (the ECS task role in the cloud,
+    # AWS_PROFILE or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY on a laptop).
+    AWS_REGION: str = Field("us-east-1", validation_alias=AliasChoices("AWS_REGION", "AWS_DEFAULT_REGION"))
+    S3_BUCKET_NAME: str = Field("", validation_alias="S3_BUCKET_NAME")          # original PDFs + logs
+    S3_PREFIX: str = Field("uploads/", validation_alias="S3_PREFIX")
+    s3_vectors_bucket_name: str = Field("", validation_alias="S3_VECTORS_BUCKET_NAME")
+    s3_vectors_index_name: str = Field("meridian-docs", validation_alias="S3_VECTORS_INDEX_NAME")
 
     # --- Agent middleware limits ---
     agent_max_model_calls: int = Field(8, validation_alias="AGENT_MAX_MODEL_CALLS")
@@ -75,9 +86,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _normalise(self) -> "Settings":
-        # Vertex AI Vector Search expects the prefix to end with "/"
-        if self.GCS_PREFIX and not self.GCS_PREFIX.endswith("/"):
-            self.GCS_PREFIX += "/"
+        # Keep the S3 prefix in the form "uploads/" so keys are built the same way everywhere
+        if self.S3_PREFIX and not self.S3_PREFIX.endswith("/"):
+            self.S3_PREFIX += "/"
         return self
 
     # --- Convenience ---
@@ -96,22 +107,11 @@ class Settings(BaseSettings):
     def missing_cloud_settings(self) -> list[str]:
         """Names of cloud settings that are still empty (used for clear error messages)."""
         required = {
-            "GCP_PROJECT_ID": self.GCP_PROJECT,
-            "GCS_BUCKET_NAME": self.GCS_BUCKET_NAME,
-            "VECTOR_SEARCH_INDEX_ID": self.vector_search_index_id,
-            "VECTOR_SEARCH_INDEX_ENDPOINT_ID": self.vector_search_index_endpoint_id,
+            "S3_BUCKET_NAME": self.S3_BUCKET_NAME,
+            "S3_VECTORS_BUCKET_NAME": self.s3_vectors_bucket_name,
+            "S3_VECTORS_INDEX_NAME": self.s3_vectors_index_name,
         }
         return [name for name, value in required.items() if not value]
 
 
 settings = Settings()
-
-
-# Cloud mode on a laptop: point Google's client libraries at the service-account key.
-# (On Cloud Run nothing is set here; the service's own identity is used.)
-if settings.is_cloud and settings.gcp_service_account_path:
-    key_path = Path(settings.gcp_service_account_path)
-    if not key_path.is_absolute():
-        key_path = PROJECT_ROOT / key_path
-    if key_path.exists():
-        os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", str(key_path))

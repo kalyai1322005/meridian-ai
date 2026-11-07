@@ -15,7 +15,7 @@ langchain==1.2.11               # create_agent + agent middleware
 langchain-core==1.2.18          # @tool, prompts, LCEL runnables
 langchain-community==0.4.1      # PyPDFLoader
 langchain-text-splitters==1.1.1
-langchain-google-genai==4.2.1   # Gemini chat model + embeddings (API key locally, Vertex AI in cloud)
+langchain-google-genai==4.2.1   # Gemini chat model (both modes) + Gemini embeddings (local mode)
 langgraph==1.1.6                # engine behind create_agent (installed for you; we write no graph code)
 
 # --- Local mode (APP_MODE=local) ---
@@ -23,9 +23,8 @@ langchain-chroma==1.1.0         # Chroma vector store on disk
 chromadb==1.5.9
 
 # --- Cloud mode (APP_MODE=cloud) ---
-langchain-google-vertexai==3.2.2  # Vertex AI Vector Search store
-google-cloud-aiplatform==1.141.0
-google-cloud-storage==3.9.0
+langchain-aws==1.4.1             # S3 Vectors store + Bedrock embeddings (and optional Bedrock chat)
+boto3==1.43.126                 # S3 (PDFs, logs); also pulled in by langchain-aws
 
 # --- PDF reading ---
 pypdf==6.7.5
