@@ -1,4 +1,4 @@
-"""Test setup: fake config so the tests run without Google Cloud, a Gemini key or the internet."""
+"""Test setup: fake config so the tests run without AWS, a Gemini key or the internet."""
 import os
 import sys
 import tempfile
@@ -10,10 +10,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ["APP_MODE"] = "local"
 os.environ["LOCAL_DATA_DIR"] = tempfile.mkdtemp(prefix="meridian-test-")
 os.environ["GOOGLE_API_KEY"] = "test-key"
-os.environ["GCP_PROJECT_ID"] = "test-project"
-os.environ["GCP_REGION"] = "us-central1"
-# Empty on purpose: nothing may try to reach Cloud Storage
-os.environ["GCS_BUCKET_NAME"] = ""
-os.environ["GCS_PREFIX"] = "uploads/"
-os.environ["VECTOR_SEARCH_INDEX_ID"] = ""
-os.environ["VECTOR_SEARCH_INDEX_ENDPOINT_ID"] = ""
+os.environ["AWS_REGION"] = "us-east-1"
+# Empty on purpose: nothing may try to reach S3
+os.environ["S3_BUCKET_NAME"] = ""
+os.environ["S3_PREFIX"] = "uploads/"
+os.environ["S3_VECTORS_BUCKET_NAME"] = ""
+# Fake credentials so boto3 can build clients in tests; moto/fakes answer every call, never real AWS
+os.environ["AWS_ACCESS_KEY_ID"] = "testing"
+os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
+os.environ["AWS_SESSION_TOKEN"] = "testing"

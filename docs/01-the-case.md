@@ -1,5 +1,7 @@
 # 01 · The case: what problem are we solving?
 
+> **Note:** parts of this page were written for the project's original Google Cloud setup. The project now runs on AWS (Amazon S3 Vectors, S3, Bedrock, ECS Express Mode). Where this page says Vertex AI, Cloud Storage/GCS, Cloud Run, Secret Manager or `gcloud`, read the AWS equivalent; [DEPLOY.md](../DEPLOY.md) and `infra/aws-bootstrap.yaml` are the up-to-date source.
+
 Before looking at any code, it helps to know **why this app exists**. Good software starts with a real problem. This page tells that story.
 
 > Aldermoor Industries, its people and its documents are **made up** for this project.

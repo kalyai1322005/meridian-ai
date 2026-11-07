@@ -9,9 +9,9 @@ from config.settings import settings
 def add_severity(logger, method_name, event_dict):
     """Copy the log level into a field called "severity".
 
-    Cloud Logging (which collects Cloud Run's output) recognises "severity" in a JSON
-    log line and uses it to colour and filter entries. Our own "level" field is kept
-    too, so nothing that reads "level" breaks.
+    Many log tools read a "severity" field from JSON log lines to colour and filter them.
+    Our own "level" field is kept too, so nothing that reads "level" breaks. (On AWS the
+    container's output goes to CloudWatch Logs automatically.)
     """
     level = event_dict.get("level")
     if level:
@@ -30,10 +30,10 @@ class CustomLogger:
         log_file = f"{self._timestamp}.log"
         self.log_file_path = os.path.join(self.logs_dir, log_file)
 
-        self._gcs_flushed = False
+        self._s3_flushed = False
 
-        # Register atexit to auto-flush logs to GCS on shutdown
-        atexit.register(self.flush_to_gcs)
+        # Register atexit to auto-flush logs to S3 on shutdown
+        atexit.register(self.flush_to_s3)
 
     def get_logger(self, name=__file__):
         logger_name = os.path.basename(name)
@@ -69,38 +69,36 @@ class CustomLogger:
 
         return structlog.get_logger(logger_name)
 
-    def flush_to_gcs(self):
-        """Cloud mode only: upload the current log file to GCS. Safe to call multiple times."""
-        if self._gcs_flushed:
+    def flush_to_s3(self):
+        """Cloud mode only: upload the current log file to S3. Safe to call multiple times."""
+        if self._s3_flushed:
             return
 
-        # Local mode: the log file in ./logs is enough, never touch Google Cloud
+        # Local mode: the log file in ./logs is enough, never touch AWS
         if not settings.is_cloud:
             return
 
-        gcs_bucket = settings.GCS_BUCKET_NAME
-        gcp_project = settings.GCP_PROJECT
+        s3_bucket = settings.S3_BUCKET_NAME
 
-        if not gcs_bucket:
-            print("[Logger] GCS_BUCKET_NAME not set — skipping GCS log upload.")
+        if not s3_bucket:
+            print("[Logger] S3_BUCKET_NAME not set — skipping S3 log upload.")
             return
 
         if not os.path.exists(self.log_file_path):
-            print("[Logger] Log file not found — skipping GCS log upload.")
+            print("[Logger] Log file not found — skipping S3 log upload.")
             return
 
         try:
-            from google.cloud import storage  # only needed (and imported) in cloud mode
+            import boto3  # only needed (and imported) in cloud mode
 
-            client = storage.Client(project=gcp_project or None)
-            bucket = client.bucket(gcs_bucket)
-            gcs_path = f"logs/{self._timestamp}.log"
-            blob = bucket.blob(gcs_path)
-            blob.upload_from_filename(self.log_file_path, content_type="text/plain")
+            key = f"logs/{self._timestamp}.log"
+            boto3.client("s3", region_name=settings.AWS_REGION).upload_file(
+                self.log_file_path, s3_bucket, key, ExtraArgs={"ContentType": "text/plain"}
+            )
 
-            self._gcs_flushed = True
-            print(f"[Logger] Logs uploaded to gs://{gcs_bucket}/{gcs_path}")
+            self._s3_flushed = True
+            print(f"[Logger] Logs uploaded to s3://{s3_bucket}/{key}")
         except Exception as e:
             # Use print here intentionally — the structlog logger may not be
             # available during shutdown, and we don't want to lose this error
-            print(f"[Logger] Failed to upload logs to GCS: {e}")
+            print(f"[Logger] Failed to upload logs to S3: {e}")

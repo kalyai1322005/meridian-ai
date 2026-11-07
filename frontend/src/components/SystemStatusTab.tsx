@@ -83,7 +83,6 @@ export default function SystemStatusTab() {
   }
 
   const s = status!;
-  const shortId = (id?: string) => id ? id.split("/").pop() : "—";
 
   return (
     <div className="animate-fade-in">
@@ -104,21 +103,19 @@ export default function SystemStatusTab() {
           <StatusRow label="Platform" value={s.backend?.platform} />
         </StatusSection>
 
-        <StatusSection title="Google Cloud Platform" icon="☁️">
-          <StatusRow label="Project ID" value={s.gcp?.project_id} mono />
-          <StatusRow label="Region" value={s.gcp?.region} mono />
+        <StatusSection title="Amazon Web Services" icon="☁️">
+          <StatusRow label="Region" value={s.aws?.region} mono />
         </StatusSection>
 
-        <StatusSection title={s.mode === "cloud" ? "Cloud Storage (GCS)" : "Document Store (local)"} icon="🗂️">
+        <StatusSection title={s.mode === "cloud" ? "Amazon S3" : "Document Store (local)"} icon="🗂️">
           <StatusRow label="Location" value={s.storage?.location} mono />
-          <StatusRow label="Bucket" value={s.storage?.gcs_bucket} mono />
-          <StatusRow label="Prefix" value={s.storage?.gcs_prefix} mono />
+          <StatusRow label="Bucket" value={s.storage?.s3_bucket} mono />
+          <StatusRow label="Prefix" value={s.storage?.s3_prefix} mono />
         </StatusSection>
 
         <StatusSection title={s.vector_search?.backend ?? "Vector Store"} icon="🔍">
-          <StatusRow label={s.mode === "cloud" ? "Index ID" : "Path"} value={s.mode === "cloud" ? shortId(s.vector_search?.index_id) : s.vector_search?.index_id} mono />
-          <StatusRow label="Endpoint ID" value={shortId(s.vector_search?.endpoint_id)} mono />
-          <StatusRow label="Stream Update" value={s.vector_search?.stream_update ? "Enabled" : "Disabled"} tag={s.vector_search?.stream_update ? "ok" : "warn"} />
+          <StatusRow label={s.mode === "cloud" ? "Index" : "Path"} value={s.vector_search?.index_id} mono />
+          <StatusRow label="Vector bucket" value={s.vector_search?.vector_bucket} mono />
         </StatusSection>
 
         <StatusSection title="AI Models" icon="🤖">

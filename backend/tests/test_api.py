@@ -1,4 +1,4 @@
-"""Smoke tests: the API starts and its routes work WITHOUT Google Cloud (everything external is faked)."""
+"""Smoke tests: the API starts and its routes work WITHOUT AWS (everything external is faked)."""
 from fastapi.testclient import TestClient
 from langchain_core.documents import Document
 
@@ -12,7 +12,7 @@ def test_health():
     assert client.get("/api/health").json() == {"status": "ok", "mode": "local"}
 
 
-def test_status_reports_local_mode_without_calling_gcp():
+def test_status_reports_local_mode_without_calling_aws():
     body = client.get("/api/status").json()
     assert body["mode"] == "local"
     assert body["vector_search"]["backend"] == "Chroma (local disk)"
@@ -57,7 +57,7 @@ def test_chunking_splits_long_text_and_keeps_metadata():
 
 
 def test_sample_pdfs_load_and_chunk():
-    """The demo PDFs in sample_docs/ can be read and split (no Google Cloud needed)."""
+    """The demo PDFs in sample_docs/ can be read and split (no AWS needed)."""
     import glob
     import os
 
@@ -72,7 +72,7 @@ def test_sample_pdfs_load_and_chunk():
         assert split_into_chunks(PyPDFLoader(pdf).load()), pdf
 
 
-def test_log_lines_carry_a_severity_field_for_cloud_logging():
+def test_log_lines_carry_a_severity_field_for_log_tools():
     from logger.custom_logger import add_severity
 
     assert add_severity(None, "info", {"event": "x", "level": "info"})["severity"] == "INFO"

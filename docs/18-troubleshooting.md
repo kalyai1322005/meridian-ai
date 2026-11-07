@@ -1,5 +1,7 @@
 # 18 · Troubleshooting
 
+> **Note:** parts of this page were written for the project's original Google Cloud setup. The project now runs on AWS (Amazon S3 Vectors, S3, Bedrock, ECS Express Mode). Where this page says Vertex AI, Cloud Storage/GCS, Cloud Run, Secret Manager or `gcloud`, read the AWS equivalent; [DEPLOY.md](../DEPLOY.md) and `infra/aws-bootstrap.yaml` are the up-to-date source.
+
 Find the part that is failing. Each entry: **what you see → why → what to do.** The real error text is usually in the **last lines of your terminal** and in the `detail` field of the reply.
 
 **First checks for almost anything**

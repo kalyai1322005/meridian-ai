@@ -1,5 +1,7 @@
 # 11 · Document Q&A (RAG) explained
 
+> **Note:** parts of this page were written for the project's original Google Cloud setup. The project now runs on AWS (Amazon S3 Vectors, S3, Bedrock, ECS Express Mode). Where this page says Vertex AI, Cloud Storage/GCS, Cloud Run, Secret Manager or `gcloud`, read the AWS equivalent; [DEPLOY.md](../DEPLOY.md) and `infra/aws-bootstrap.yaml` are the up-to-date source.
+
 **RAG** = *Retrieval-Augmented Generation*. In plain words: **look up the right pages first, then answer from them.** Like an open-book exam.
 
 ---

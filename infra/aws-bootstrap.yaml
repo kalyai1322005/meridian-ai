@@ -1,0 +1,275 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Meridian AI - one-time AWS setup. Creates everything the app and the GitHub Action need:
+  S3 bucket for PDFs and logs, S3 Vectors bucket + index, Secrets Manager secret, ECR repository,
+  CloudWatch log group, the three ECS roles, and a GitHub OIDC deploy role (no long-lived keys).
+  Replaces the GCP provisioning that used to live in .github/workflows/deploy.yml.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: meridian-ai
+    AllowedPattern: "^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$"
+    Description: Lower-case name used as a prefix for every resource.
+  GitHubRepo:
+    Type: String
+    Default: kalyai1322005/meridian-ai
+    Description: GitHub "owner/repo" that is allowed to deploy.
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Only workflow runs on this branch may assume the deploy role.
+  CreateGitHubOidcProvider:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Set to "false" if this AWS account already has the token.actions.githubusercontent.com OIDC provider.
+  ExistingGitHubOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: 'Only used when CreateGitHubOidcProvider is "false" - ARN of the existing provider.'
+  EmbeddingDimensions:
+    Type: Number
+    Default: 1024
+    AllowedValues: [256, 512, 1024]
+    Description: Titan Text Embeddings V2 output size. Must match BEDROCK_EMBEDDING_DIMENSIONS in the app. Cannot be changed later.
+
+Conditions:
+  MakeOidcProvider: !Equals [!Ref CreateGitHubOidcProvider, "true"]
+
+Resources:
+  # ---------------------------------------------------------------- storage
+  DocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-docs-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  VectorBucket:
+    Type: AWS::S3Vectors::VectorBucket
+    Properties:
+      VectorBucketName: !Sub "${ProjectName}-vectors-${AWS::AccountId}-${AWS::Region}"
+
+  VectorIndex:
+    Type: AWS::S3Vectors::Index
+    DependsOn: VectorBucket
+    Properties:
+      VectorBucketName: !Sub "${ProjectName}-vectors-${AWS::AccountId}-${AWS::Region}"
+      IndexName: meridian-docs
+      DataType: float32
+      Dimension: !Ref EmbeddingDimensions
+      DistanceMetric: cosine
+      MetadataConfiguration:
+        # The chunk text is stored as metadata; it must not count against the 2 KB filterable limit.
+        NonFilterableMetadataKeys: [_page_content]
+
+  # ---------------------------------------------------------------- secret + registry + logs
+  GoogleApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${ProjectName}/GOOGLE_API_KEY"
+      Description: Gemini API key (https://aistudio.google.com/apikey). Set the real value after the stack is created.
+      SecretString: REPLACE_ME
+
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref ProjectName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep the 15 newest images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":15},"action":{"type":"expire"}}]}
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${ProjectName}"
+      RetentionInDays: 30
+
+  # ---------------------------------------------------------------- ECS roles
+  # Used by ECS to pull the image, write logs and read the secret.
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-task-execution"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: read-api-key-secret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref GoogleApiKeySecret
+
+  # Used by ECS Express Mode to create and manage the load balancer, security groups and scaling.
+  InfrastructureRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-ecs-infrastructure"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices
+
+  # The identity of the running app (this replaces the GCP service account).
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: meridian-app
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Documents
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt DocumentsBucket.Arn
+                  - !Sub "${DocumentsBucket.Arn}/*"
+              - Sid: Vectors
+                Effect: Allow
+                Action:
+                  - s3vectors:GetVectorBucket
+                  - s3vectors:GetIndex
+                  - s3vectors:CreateIndex
+                  - s3vectors:PutVectors
+                  - s3vectors:GetVectors
+                  - s3vectors:QueryVectors
+                  - s3vectors:ListVectors
+                  - s3vectors:DeleteVectors
+                Resource:
+                  - !GetAtt VectorBucket.VectorBucketArn
+                  - !Sub "${VectorBucket.VectorBucketArn}/index/*"
+              - Sid: Bedrock
+                Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/*"
+                  - !Sub "arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*"
+
+  # ---------------------------------------------------------------- GitHub Actions deploy role
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-github-deployer"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - MakeOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingGitHubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepo}:ref:refs/heads/${GitHubBranch}"
+      Policies:
+        - PolicyName: deploy-meridian
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: PushImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !GetAtt Repository.Arn
+              - Sid: EcrLogin
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: EcsExpressService
+                Effect: Allow
+                Action:
+                  - ecs:*
+                  - ec2:Describe*
+                  - elasticloadbalancing:Describe*
+                  - application-autoscaling:Describe*
+                  - logs:Describe*
+                  - iam:CreateServiceLinkedRole
+                Resource: "*"
+              - Sid: HandOverRolesToEcs
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt TaskExecutionRole.Arn
+                  - !GetAtt InfrastructureRole.Arn
+                  - !GetAtt TaskRole.Arn
+              - Sid: ReadStackOutputs
+                Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"
+
+Outputs:
+  DeployRoleArn:
+    Description: Put this in GitHub -> Settings -> Secrets and variables -> Actions -> Secrets as AWS_ROLE_ARN
+    Value: !GetAtt DeployRole.Arn
+  Region:
+    Description: Put this in GitHub Actions Variables as AWS_REGION
+    Value: !Ref AWS::Region
+  StackName:
+    Description: Put this in GitHub Actions Variables as AWS_STACK_NAME (the workflow reads everything else from this stack)
+    Value: !Ref AWS::StackName
+  DocumentsBucketName:
+    Value: !Ref DocumentsBucket
+  VectorBucketName:
+    Value: !Sub "${ProjectName}-vectors-${AWS::AccountId}-${AWS::Region}"
+  VectorIndexName:
+    Value: meridian-docs
+  EmbeddingDimensions:
+    Value: !Ref EmbeddingDimensions
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+  SecretArn:
+    Value: !Ref GoogleApiKeySecret
+  LogGroupName:
+    Value: !Ref LogGroup
+  TaskExecutionRoleArn:
+    Value: !GetAtt TaskExecutionRole.Arn
+  InfrastructureRoleArn:
+    Value: !GetAtt InfrastructureRole.Arn
+  TaskRoleArn:
+    Value: !GetAtt TaskRole.Arn

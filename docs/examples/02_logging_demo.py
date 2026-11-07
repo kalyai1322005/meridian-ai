@@ -14,7 +14,7 @@ import structlog
 # ---- 1. Plain text logging ------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
 plain = logging.getLogger("plain")
-plain.info("Loaded PDF from GCS blob=policy.pdf pages=12")
+plain.info("Loaded PDF from S3 key=policy.pdf pages=12")
 
 # ---- 2. Structured logging (what the project does) ------------------------------
 structlog.configure(
@@ -28,7 +28,7 @@ structlog.configure(
 )
 log = structlog.get_logger("demo")
 
-log.info("Loaded PDF from GCS", blob="policy.pdf", pages=12)          # INFO: normal progress
+log.info("Loaded PDF from S3", key="policy.pdf", pages=12)          # INFO: normal progress
 log.warning("No chunks extracted, skipping indexing", filename="scan.pdf")  # WARNING: odd but handled
 try:
     1 / 0

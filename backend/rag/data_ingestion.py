@@ -5,7 +5,7 @@
 Two entry points share the same steps:
   * ingest_pdf()          - one PDF on disk (used by the upload endpoint)
   * ingest_stored_pdfs()  - every PDF in the document store
-                            (local: .meridian/uploads/, cloud: the GCS bucket)
+                            (local: .meridian/uploads/, cloud: the S3 bucket)
 """
 import hashlib
 

@@ -33,7 +33,7 @@ This README is the short version. The [`docs/`](docs/README.md) folder explains 
 | Practise | [Exercises](docs/16-exercises.md) · [runnable examples](docs/examples/README.md) |
 | Fix an error | [Troubleshooting](docs/18-troubleshooting.md) |
 
-> **Is Terraform used?** No. The cloud is set up by GitHub Actions running `gcloud` commands (see [docs/14](docs/14-provisioning-and-github-actions.md)).
+> **Is Terraform used?** No. The cloud is set up once with a CloudFormation template (`infra/aws-bootstrap.yaml`), then GitHub Actions deploys on every push (see [DEPLOY.md](DEPLOY.md)).
 
 ---
 
@@ -49,15 +49,15 @@ Think of a **restaurant**. Each technology plays one part.
 | **LangChain** | A toolkit for connecting AI steps together | The kitchen's recipe book and workflow |
 | **Gemini** (Google's AI model) | Reads text and writes answers | The **chef** |
 | **Embeddings** | Turn text into a list of numbers that capture its *meaning* | GPS coordinates for ideas: similar ideas get nearby coordinates |
-| **Vertex AI Vector Search** | A database that finds the stored text closest in meaning to your question | A library catalogue organised by *meaning*, not by title |
+| **Amazon S3 Vectors** | A database that finds the stored text closest in meaning to your question | A library catalogue organised by *meaning*, not by title |
 | **Chroma** | The same kind of database, but a folder on your laptop (used when `APP_MODE=local`) | A home bookshelf with the same catalogue system |
 | **RAG** (Retrieval-Augmented Generation) | Find the right pages first, then answer from them | An **open-book exam**: the chef checks the cookbook before answering |
 | **Agents and tools** | AI that can decide to run small programs (tools) to get facts | A chef who can use a scale, a thermometer and a timer |
 | **Middleware** (LangChain v1) | Checks that wrap every agent step: hide e-mails, stop loops, retry errors, log tool calls | The kitchen's head of hygiene and safety, watching every step |
-| **Cloud Storage** | Keeps files in Google Cloud | A filing cabinet |
+| **Amazon S3** | Keeps files in AWS | A filing cabinet |
 | **Docker** | Packs the app and everything it needs into one box | A lunchbox: opens the same anywhere |
-| **Cloud Run** | Runs that box on the internet, only when someone visits | A pop-up shop that opens only when customers arrive |
-| **Secret Manager** | Stores passwords and keys safely | A safe |
+| **ECS Express Mode** | Runs that box on the internet behind a public address | A shop with its own street entrance |
+| **Secrets Manager** | Stores passwords and keys safely | A safe |
 | **GitHub Actions** | Builds and delivers the app automatically | A delivery robot |
 | **Logging** (structlog) | The app writes down what it does | The kitchen's diary: when something goes wrong, you read it |
 
@@ -75,7 +75,7 @@ Think of a **restaurant**. Each technology plays one part.
  BACKEND (FastAPI)                      the waiter
    │
    ├── Document Q&A (RAG) ───────────┐
-   │     1. cut PDFs into small pieces│   Vertex AI: turns pieces into numbers
+   │     1. cut PDFs into small pieces│   Bedrock: turns pieces into numbers
    │     2. store them ───────────────┼─► Vector Search: finds pieces closest to your question
    │     3. find pieces for question ◄┘
    │     4. ask Gemini to answer from those pieces ─► Gemini
@@ -171,7 +171,7 @@ api  →  rag, agent  →  config, logger
 |---|---|
 | Everything | **Python 3.12**, **Git**. For the web page also **Node.js 20+** |
 | Local mode (audit **and** document Q&A) | Only a free **Gemini API key** from https://aistudio.google.com/apikey |
-| Cloud mode | A **Google Cloud** project (see [DEPLOY.md](DEPLOY.md)) |
+| Cloud mode | An **AWS** account (see [DEPLOY.md](DEPLOY.md)) |
 
 ### Local or cloud? One switch
 
@@ -179,16 +179,16 @@ api  →  rag, agent  →  config, logger
 
 | | `APP_MODE=local` (default) | `APP_MODE=cloud` |
 |---|---|---|
-| Chat model | Gemini API (API key) | Gemini API (key from Secret Manager) |
-| Embeddings | `gemini-embedding-001` via Gemini API | `text-embedding-005` via Vertex AI |
-| Vector database | **Chroma**, a folder on your disk (`.meridian/chroma`) | **Vertex AI Vector Search** |
-| Uploaded PDFs | `.meridian/uploads/` | Cloud Storage bucket |
+| Chat model | Gemini API (API key) | Gemini API (key from Secrets Manager), or Amazon Bedrock |
+| Embeddings | `gemini-embedding-001` via Gemini API | `amazon.titan-embed-text-v2:0` via Amazon Bedrock |
+| Vector database | **Chroma**, a folder on your disk (`.meridian/chroma`) | **Amazon S3 Vectors** |
+| Uploaded PDFs | `.meridian/uploads/` | S3 bucket |
 | Logs | `logs/` folder | `logs/` + copied to the bucket on shutdown |
-| Google Cloud project needed? | **No** | Yes |
+| AWS account needed? | **No** | Yes |
 
 The System Status tab (and `GET /api/status`) shows which mode is running.
 
-### Quick start: everything locally (about 10 minutes, no Google Cloud)
+### Quick start: everything locally (about 10 minutes, no AWS)
 
 ```bash
 # 1. Get the code (or download the ZIP from GitHub and unzip it)
@@ -269,67 +269,23 @@ You do need it for these reasons:
 
 | Reason | Explanation |
 |---|---|
-| **A managed vector database** | Chroma on your disk is perfect for one person. **Vertex AI Vector Search** is shared, backed up and scales to millions of chunks. |
+| **A managed vector database** | Chroma on your disk is perfect for one person. **Amazon S3 Vectors** is shared, durable and scales to millions of chunks. |
 | **Sharing** | On your laptop, only you can open `localhost`. In the cloud, anyone with the link can. |
 | **Always on** | Your laptop sleeps and goes offline. A cloud service keeps running. |
 | **Automatic delivery** | Each time you save changes, a robot can rebuild and publish the app. |
 | **Scaling** | Many users at once? The cloud can start more copies. |
 
-**It costs money.** The vector database is billed **by the hour while it is running, even if nobody uses it.** New Google Cloud customers get a **$300 credit for 90 days**. [DEPLOY.md](DEPLOY.md) explains the costs, how to set a budget alert, and how to switch everything off.
+**It costs money.** The web service and its load balancer are billed **by the hour while they are running, even if nobody uses the app.** [DEPLOY.md](DEPLOY.md) explains the costs, how to set a budget alert, and how to switch everything off.
 
 ---
 
-## Troubleshooting: Cloud Run service deploys but isn't publicly reachable
+## Troubleshooting: the deploy
 
-If `gcloud run deploy` succeeds but visiting the service URL returns a 403 /
-"Forbidden your client does not have permission", it's almost always an IAM
-problem, not a deploy problem — and it's a confusing one because
-`--allow-unauthenticated` is *already* on the deploy command.
+The deploy is described step by step in [DEPLOY.md](DEPLOY.md), including a table of common errors. In short:
 
-**Why the flag alone isn't enough:** setting that flag requires the deploying
-identity to hold the `run.services.setIamPolicy` permission. That permission
-is only included in `roles/owner` and `roles/run.admin` — **not** in
-`roles/editor`. If your `github-deployer` service account has `roles/editor`
-(the common starting point), `gcloud run deploy --allow-unauthenticated` can
-report success while silently failing to attach the public-access policy, and
-the service stays locked down.
-
-**The fix** (already in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)):
-a final `Allow Public Access to Cloud Run` step that:
-1. Grants the deployer service account `roles/run.admin` on the project
-   (it can do this to itself because it already has
-   `roles/resourcemanager.projectIamAdmin`).
-2. Explicitly binds `allUsers` to `roles/run.invoker` on the service.
-3. Prints the resulting IAM policy so the Actions log confirms it worked.
-
-This runs automatically on every push to `main` — no manual console step
-needed.
-
-### Other permission gaps this workflow now handles
-
-Earlier runs could also fail partway through for the same underlying reason
-(basic roles don't include `setIamPolicy`/`addIamPolicyBinding` on
-specific resources):
-
-| Step | Problem it fixes |
-|---|---|
-| Secret Manager Admin self-grant | `roles/editor` can create a secret but can't set that secret's own IAM policy |
-| Project-wide `secretAccessor` grant | Replaces a per-secret grant that hits the same `setIamPolicy` wall |
-| Cloud Build builder role + 60s wait | Newer GCP projects don't grant the default compute service account Cloud Build permissions automatically |
-| Vertex AI + Storage runtime grants | The Cloud Run service's own identity (the default compute SA) has no roles by default — it needs `aiplatform.user` and `storage.objectAdmin` to actually serve requests |
-
-### If a run still fails on an IAM step
-
-Those steps assume `github-deployer@meridian-ai-511611.iam.gserviceaccount.com`
-already has `roles/editor` and `roles/resourcemanager.projectIamAdmin` at the
-project level (that's what lets it grant itself the extra roles above). If a
-step fails with `PERMISSION_DENIED`, check those two roles are actually
-attached to the service account in IAM & Admin → IAM, rather than re-running
-the workflow repeatedly.
-
-*Workflow also hardened with a `concurrency` guard (no overlapping deploys)
-and explicit failure detection in the Vector Search index-deployment step
-(previously a failed deploy could pass silently after a 45-minute wait).*
+- The permissions are created once by `infra/aws-bootstrap.yaml` (a CloudFormation stack), not by the workflow. If a workflow step fails with `AccessDenied`, the deploy role or the task role in that template is missing a permission: fix the template and update the stack.
+- The first deploy creates the load balancer and can take several minutes. `infra/deploy-service.sh` waits for the public address and then for `/api/health` to answer.
+- Logs of the running app are in CloudWatch Logs, group `/ecs/meridian-ai`.
 
 ---
 
@@ -341,21 +297,22 @@ Settings live in `.env` (copy `.env.example`). `.env` is never uploaded to Git.
 |---|---|---|
 | `APP_MODE` | `local` (default) or `cloud` | Always |
 | `GOOGLE_API_KEY` | Your Gemini key | Both modes |
-| `VERTEX_LLM_MODEL_NAME` | Chat model, default `gemini-3.8-flash` | Optional |
+| `LLM_MODEL_NAME` | Chat model, default `gemini-3.8-flash` (old name `VERTEX_LLM_MODEL_NAME` still works) | Optional |
+| `LLM_PROVIDER` / `BEDROCK_LLM_MODEL_ID` | `gemini` (default) or `bedrock`, and the Bedrock model ID | Optional |
 | `LLM_TEMPERATURE` | `0` = most repeatable answers | Optional |
 | `LOCAL_EMBEDDING_MODEL_NAME` | Default `gemini-embedding-001` | Optional, local |
 | `LOCAL_DATA_DIR` | Where Chroma and uploads live, default `.meridian/` | Optional, local |
 | `AGENT_MAX_MODEL_CALLS` / `AGENT_MAX_TOOL_CALLS` / `AGENT_MAX_RETRIES` | Middleware limits, defaults 8 / 6 / 2 | Optional |
-| `GCP_PROJECT_ID` | Your Google Cloud project | Cloud |
-| `GCP_REGION` | Where it runs, e.g. `us-central1` | Cloud |
-| `GCS_BUCKET_NAME` | Cloud Storage bucket name | Cloud |
-| `GCS_PREFIX` | Folder for uploads, `uploads/` | Cloud |
-| `VECTOR_SEARCH_INDEX_ID` | ID of your vector index | Cloud |
-| `VECTOR_SEARCH_INDEX_ENDPOINT_ID` | ID of its endpoint | Cloud |
-| `GCP_SERVICE_ACCOUNT_PATH` | Path to your key file | Cloud mode run from a laptop |
-| `VERTEX_EMBEDDING_MODEL_NAME` | Embedding model, default `text-embedding-005` | Optional, cloud |
+| `AWS_REGION` | Where it runs, e.g. `us-east-1` | Cloud |
+| `S3_BUCKET_NAME` | S3 bucket for PDFs and logs | Cloud |
+| `S3_PREFIX` | Folder for uploads, `uploads/` | Cloud |
+| `S3_VECTORS_BUCKET_NAME` | S3 Vectors bucket | Cloud |
+| `S3_VECTORS_INDEX_NAME` | Index name, default `meridian-docs` | Cloud |
+| `BEDROCK_EMBEDDING_MODEL_ID` / `BEDROCK_EMBEDDING_DIMENSIONS` | Default `amazon.titan-embed-text-v2:0` / `1024` (must match the index) | Optional, cloud |
 
-> AI model names are retired from time to time. If you see "model not found", look up a current name at https://ai.google.dev/gemini-api/docs/models and set `VERTEX_LLM_MODEL_NAME`.
+AWS credentials are not settings: use `aws configure` / `AWS_PROFILE` on your laptop; on ECS the task role is used.
+
+> AI model names are retired from time to time. If you see "model not found", look up a current name at https://ai.google.dev/gemini-api/docs/models and set `LLM_MODEL_NAME`.
 
 ---
 
@@ -369,8 +326,8 @@ Settings live in `.env` (copy `.env.example`). `.env` is never uploaded to Git.
 | `503` with "APP_MODE=cloud but these settings are empty" | Fill in the listed settings, or set `APP_MODE=local` |
 | `503` with "GOOGLE_API_KEY is empty" | Add your Gemini key to `.env` and restart |
 | Old answers after changing documents | Local mode: delete the `.meridian/` folder and upload again |
-| `403` from Google Cloud | Your login or key lacks permission, or the wrong account is used; see [DEPLOY.md](DEPLOY.md) |
-| "model not found" | Change `VERTEX_LLM_MODEL_NAME` to a current model |
+| `AccessDenied` from AWS | Your login lacks permission, or the wrong account/region is used; see [DEPLOY.md](DEPLOY.md) |
+| "model not found" | Change `LLM_MODEL_NAME` to a current model |
 | Port already in use | Stop the other program, or use `--port 8081` |
 | Browser says "blocked by CORS" | The backend is not running on port 8080 |
 

@@ -1,7 +1,7 @@
 """The vector database that stores our embeddings. Which one depends on APP_MODE.
 
     local  -> Chroma, a vector database that saves to a folder on your disk
-    cloud  -> Vertex AI Vector Search, Google's managed vector database
+    cloud  -> Amazon S3 Vectors, AWS's pay-per-use managed vector storage
 
 Both are LangChain `VectorStore`s, so the rest of the code (ingestion, retrieval)
 calls the same methods (`add_documents`, `as_retriever`) and never knows which one it got.
@@ -32,19 +32,23 @@ def _cloud_store() -> VectorStore:
     if missing:
         raise ConfigurationError(f"APP_MODE=cloud but these settings are empty: {', '.join(missing)}")
 
-    from google.cloud import aiplatform
-    from langchain_google_vertexai import VectorSearchVectorStore
+    from langchain_aws.vectorstores.s3_vectors import AmazonS3Vectors
 
-    log.info("Using Vertex AI Vector Search", index_id=settings.vector_search_index_id)
-    aiplatform.init(project=settings.GCP_PROJECT, location=settings.GCP_REGION)
-    return VectorSearchVectorStore.from_components(
-        project_id=settings.GCP_PROJECT,
-        region=settings.GCP_REGION,
-        embedding=get_embeddings(),  # NOTE: singular "embedding", not "embeddings"
-        index_id=settings.vector_search_index_id,
-        endpoint_id=settings.vector_search_index_endpoint_id,
-        gcs_bucket_name=settings.GCS_BUCKET_NAME,
-        stream_update=True,
+    log.info(
+        "Using Amazon S3 Vectors",
+        vector_bucket=settings.s3_vectors_bucket_name,
+        index=settings.s3_vectors_index_name,
+    )
+    return AmazonS3Vectors(
+        vector_bucket_name=settings.s3_vectors_bucket_name,
+        index_name=settings.s3_vectors_index_name,
+        embedding=get_embeddings(),
+        region_name=settings.AWS_REGION,
+        distance_metric="cosine",
+        # The chunk text is stored next to each vector. It must be "non-filterable",
+        # otherwise S3 Vectors rejects it for being over the 2 KB filterable-metadata limit.
+        non_filterable_metadata_keys=["_page_content"],
+        create_index_if_not_exist=True,  # safety net; the bootstrap stack normally creates the index
     )
 
 
