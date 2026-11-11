@@ -26,6 +26,30 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      # TEMPORARY: prints what GitHub sends to AWS and what the AWS_ROLE_ARN secret looks like,
+      # so the "Not authorized to perform sts:AssumeRoleWithWebIdentity" error can be traced.
+      # Logs of a public repo are public, so only a masked account number is printed. Delete this step afterwards.
+      - name: Diagnose AWS login settings (temporary)
+        env:
+          ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        shell: bash
+        run: |
+          if [ -z "$ROLE_ARN" ]; then echo "PROBLEM: secret AWS_ROLE_ARN is EMPTY or missing"; else
+            echo "secret length: ${#ROLE_ARN} (a correct value for this role is 51)"
+            if [[ "$ROLE_ARN" =~ ^arn:aws:iam::([0-9]{12}):role/([A-Za-z0-9+=,.@_-]+)$ ]]; then
+              ACC="${BASH_REMATCH[1]}"
+              echo "secret format: OK"
+              echo "secret account (masked): ${ACC:0:3}...${ACC:9:3}"
+              echo "secret role name: ${BASH_REMATCH[2]}"
+            else
+              echo "PROBLEM: secret does not look like arn:aws:iam::<12 digits>:role/<name> (extra space, quote or newline?)"
+            fi
+          fi
+          echo "--- what GitHub will tell AWS (OIDC token claims) ---"
+          TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | python3 -c 'import sys,json; print(json.load(sys.stdin)["value"])')
+          TOKEN="$TOKEN" python3 -c 'import os,json,base64; p=os.environ["TOKEN"].split(".")[1]; c=json.loads(base64.urlsafe_b64decode(p+"="*(-len(p)%4))); [print(k+":", c.get(k)) for k in ("iss","aud","sub","repository","ref","job_workflow_ref")]'
+
       - name: Assume AWS deployment role with GitHub OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
