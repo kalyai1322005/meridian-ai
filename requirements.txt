@@ -1,0 +1,32 @@
+# Versions are pinned so the project behaves the same on every computer.
+# Tested with Python 3.12.
+
+# --- Web API ---
+fastapi==0.135.1
+uvicorn==0.41.0
+python-multipart==0.0.22        # needed for file uploads
+pydantic==2.12.5
+pydantic-settings==2.15.0       # reads settings from .env
+structlog==26.1.0               # structured (JSON) logging
+requests==2.34.2                # live FX rate lookup
+
+# --- LangChain v1 ---
+langchain==1.2.11               # create_agent + agent middleware
+langchain-core==1.6.10          # @tool, prompts, LCEL runnables; required by langchain-aws
+langchain-community==0.4.1      # PyPDFLoader
+langchain-text-splitters==1.1.1
+langchain-google-genai==4.2.1   # Gemini chat model + embeddings (local mode)
+langgraph==1.1.6                # engine behind create_agent (installed for you; we write no graph code)
+langchain-aws==1.9.0            # Amazon Bedrock chat + embeddings (cloud mode)
+boto3==1.43.64                  # AWS SDK; task roles provide cloud credentials
+opensearch-py[async]==3.0.0     # Signed OpenSearch Serverless vector search requests
+
+# --- Local mode (APP_MODE=local) ---
+langchain-chroma==1.1.0         # Chroma vector store on disk
+chromadb==1.5.9
+
+# --- Cloud mode (APP_MODE=cloud) ---
+# Bedrock and S3 are accessed with the AWS SDK default credential chain.
+
+# --- PDF reading ---
+pypdf==6.7.5

@@ -1,0 +1,296 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Meridian AI demo stack - ECS Fargate, S3, Bedrock, and OpenSearch Serverless.
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: Immutable ECR image URI for this release.
+  ContainerCpu:
+    Type: String
+    Default: '1024'
+    AllowedValues: ['512', '1024', '2048']
+  ContainerMemory:
+    Type: String
+    Default: '2048'
+    AllowedValues: ['1024', '2048', '3072', '4096', '8192']
+  BedrockChatModelId:
+    Type: String
+    Default: us.amazon.nova-lite-v1:0
+  BedrockEmbeddingModelId:
+    Type: String
+    Default: amazon.titan-embed-text-v2:0
+
+Resources:
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-${AWS::Region}-meridian-ai-data'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireArchivedLogs
+            Prefix: logs/
+            Status: Enabled
+            ExpirationInDays: 30
+
+  OpenSearchEncryptionPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: meridian-ai-encryption
+      Type: encryption
+      Policy: !Sub >-
+        {"Rules":[{"ResourceType":"collection","Resource":["collection/meridian-ai"]}],"AWSOwnedKey":true}
+
+  OpenSearchNetworkPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: meridian-ai-network
+      Type: network
+      Policy: !Sub >-
+        [{"Description":"Public HTTPS endpoint; IAM and data policies still authenticate every request.","Rules":[{"ResourceType":"collection","Resource":["collection/meridian-ai"]}],"AllowFromPublic":true}]
+
+  OpenSearchCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    DependsOn:
+      - OpenSearchEncryptionPolicy
+      - OpenSearchNetworkPolicy
+    Properties:
+      Name: meridian-ai
+      Type: VECTORSEARCH
+      StandbyReplicas: DISABLED
+      Description: Meridian AI document embeddings
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: MeridianRuntimeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: DocumentsAndLogArchive
+                Effect: Allow
+                Action: [s3:ListBucket]
+                Resource: !GetAtt DataBucket.Arn
+              - Sid: ReadWriteApplicationObjects
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub '${DataBucket.Arn}/*'
+              - Sid: BedrockInference
+                Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource: '*'
+              - Sid: OpenSearchServerlessDataPlane
+                Effect: Allow
+                Action: [aoss:APIAccessAll]
+                Resource: !GetAtt OpenSearchCollection.Arn
+
+  OpenSearchDataAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Properties:
+      Name: meridian-ai-data
+      Type: data
+      Policy: !Sub
+        - '[{"Description":"Allow only the Meridian ECS task role to read and write the vector index.","Principal":["${TaskRoleArn}"],"Rules":[{"ResourceType":"collection","Resource":["collection/meridian-ai"],"Permission":["aoss:CreateCollectionItems","aoss:DescribeCollectionItems"]},{"ResourceType":"index","Resource":["index/meridian-ai/*"],"Permission":["aoss:CreateIndex","aoss:UpdateIndex","aoss:DescribeIndex","aoss:ReadDocument","aoss:WriteDocument"]}]}]'
+        - TaskRoleArn: !GetAtt TaskRole.Arn
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: meridian-ai-vpc}]
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+  DefaultInternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  SubnetARouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PublicSubnetA, RouteTableId: !Ref PublicRouteTable}
+  SubnetBRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PublicSubnetB, RouteTableId: !Ref PublicRouteTable}
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public HTTP entry for Meridian AI
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow app traffic only from the load balancer
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups: [!Ref LoadBalancerSecurityGroup]
+      Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      Protocol: HTTP
+      Port: 8080
+      TargetType: ip
+      HealthCheckPath: /api/health
+      Matcher: {HttpCode: '200'}
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/meridian-ai
+      RetentionInDays: 30
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: meridian-ai
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: OpenSearchDataAccessPolicy
+    Properties:
+      Family: meridian-ai
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: !Ref ContainerCpu
+      Memory: !Ref ContainerMemory
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: meridian-ai
+          Image: !Ref ImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Environment:
+            - {Name: APP_MODE, Value: cloud}
+            - {Name: ENVIRONMENT, Value: production}
+            - {Name: AWS_REGION, Value: !Ref AWS::Region}
+            - {Name: S3_BUCKET_NAME, Value: !Ref DataBucket}
+            - {Name: S3_PREFIX, Value: uploads/}
+            - {Name: OPENSEARCH_URL, Value: !GetAtt OpenSearchCollection.CollectionEndpoint}
+            - {Name: OPENSEARCH_INDEX, Value: meridian-docs}
+            - {Name: BEDROCK_LLM_MODEL_ID, Value: !Ref BedrockChatModelId}
+            - {Name: BEDROCK_EMBEDDING_MODEL_ID, Value: !Ref BedrockEmbeddingModelId}
+            - {Name: EMBEDDING_DIMENSIONS, Value: '1024'}
+            - {Name: LLM_TEMPERATURE, Value: '0.0'}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: app
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: HttpListener
+    Properties:
+      ServiceName: meridian-ai
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 180
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+          SecurityGroups: [!Ref TaskSecurityGroup]
+      LoadBalancers:
+        - ContainerName: meridian-ai
+          ContainerPort: 8080
+          TargetGroupArn: !Ref TargetGroup
+
+Outputs:
+  ApplicationUrl:
+    Description: Public HTTP address for Meridian AI. Add HTTPS/custom domain before production use.
+    Value: !Sub 'http://${LoadBalancer.DNSName}'
+  DataBucketName:
+    Value: !Ref DataBucket
+  OpenSearchEndpoint:
+    Value: !GetAtt OpenSearchCollection.CollectionEndpoint
+  EcsClusterName:
+    Value: !Ref Cluster
+  EcsServiceName:
+    Value: !GetAtt Service.Name
