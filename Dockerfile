@@ -34,7 +34,16 @@ COPY backend/ ./backend/
 # Copy built frontend static files from the frontend-builder stage
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
-# Expose the single port used by ECS Fargate / local tests
+# Run as a normal (non-root) user. Hugging Face Spaces requires this, and it is
+# safer everywhere else too. The app writes logs to /app/logs and, in local mode,
+# its vector database and uploads to LOCAL_DATA_DIR, so both must be writable.
+RUN useradd -m -u 1000 user \
+    && mkdir -p /app/logs /home/user/.meridian \
+    && chown -R user:user /app /home/user
+USER user
+ENV LOCAL_DATA_DIR=/home/user/.meridian
+
+# Expose the single port used by ECS Fargate, Hugging Face Spaces and local tests
 EXPOSE 8080
 
 # Start the application using Uvicorn

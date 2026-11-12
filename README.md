@@ -9,7 +9,11 @@ It is built to **learn from**. The company in the examples, *Aldermoor Industrie
 
 > The "checks" in the audit are done by the AI from its general knowledge (only the exchange-rate check uses a live data source). This is a demo of how such a system is built, **not** a real compliance tool.
 
-> **Cloud deployment:** this working version targets AWS. See the step-by-step [AWS deployment guide](DEPLOY.md). Some learner notes in `docs/` still contain older Google Cloud examples and do not describe the AWS deployment.
+> **Run it free:** no AWS and no credit card needed. Use local mode with a free Gemini key, or put it online on a free Hugging Face Space. See [DEPLOY-FREE.md](DEPLOY-FREE.md).
+>
+> **Optional paid cloud deployment:** the AWS version (ECS Fargate, Bedrock, OpenSearch Serverless) is documented in [DEPLOY.md](DEPLOY.md) and only runs when you start it by hand. Some learner notes in `docs/` still contain older Google Cloud examples.
+>
+> **Credit:** this project started from the learner project [mayank953/meridian-ai-learner](https://github.com/mayank953/meridian-ai-learner). This repository adds the AWS cloud mode, GitHub Actions workflows and free deployment.
 
 **New here? Read the [Learner Guide](docs/README.md)**: the story, every file explained, exercises and examples.
 
@@ -35,7 +39,7 @@ This README is the short version. The [`docs/`](docs/README.md) folder explains 
 | Practise | [Exercises](docs/16-exercises.md) · [runnable examples](docs/examples/README.md) |
 | Fix an error | [Troubleshooting](docs/18-troubleshooting.md) |
 
-> **How is AWS set up?** GitHub Actions deploys the CloudFormation template at `infrastructure/aws/template.yaml`. Follow [DEPLOY.md](DEPLOY.md) for the beginner steps.
+> **How is AWS set up?** The optional AWS workflow deploys the CloudFormation template at `infrastructure/aws/template.yaml`. Follow [DEPLOY.md](DEPLOY.md). For the free route, use [DEPLOY-FREE.md](DEPLOY-FREE.md).
 
 ---
 
@@ -278,7 +282,7 @@ You do need it for these reasons:
 | **Automatic delivery** | Each time you save changes, a robot can rebuild and publish the app. |
 | **Scaling** | Many users at once? The cloud can start more copies. |
 
-**AWS costs money.** ECS Fargate and the load balancer incur charges while the service exists. OpenSearch Serverless charges depend on collection type, capacity and use. [DEPLOY.md](DEPLOY.md) explains how to set a budget alert and remove resources when finished.
+**AWS costs money (the free path above does not).** ECS Fargate and the load balancer incur charges while the service exists. OpenSearch Serverless charges depend on collection type, capacity and use. [DEPLOY.md](DEPLOY.md) explains how to set a budget alert and remove resources when finished.
 
 ---
 

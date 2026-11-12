@@ -1,5 +1,7 @@
 # Deploy Meridian AI to AWS (beginner guide)
 
+> **This path costs money.** For a free setup (Gemini free tier + Hugging Face Spaces) use [DEPLOY-FREE.md](DEPLOY-FREE.md). The AWS workflow only runs when you start it manually from the Actions tab.
+
 This project keeps its local mode and adds an AWS cloud mode. AWS hosts the app in ECS Fargate, stores PDFs and archived logs in S3, searches document vectors in OpenSearch Serverless, and runs chat and embedding models through Amazon Bedrock.
 
 ## Before you start
@@ -13,7 +15,7 @@ The web app is public over HTTP and has no sign-in. Use sample documents only un
 
 ## Step 1: Make a copy of the repository
 
-On GitHub, open your copy of `meridian-ai` and make sure the default branch is named `main`. The deploy workflow runs after a push to `main`, or when you manually start it from **Actions → Deploy to AWS ECS → Run workflow**.
+On GitHub, open your copy of `meridian-ai` and make sure the default branch is named `main`. The deploy workflow only runs when you manually start it from **Actions → Deploy to AWS ECS (optional, paid) → Run workflow**.
 
 ## Step 2: Create a GitHub-to-AWS connection (OIDC)
 
@@ -38,7 +40,7 @@ The application does not need an AWS secret key or Gemini key in cloud mode. ECS
 
 ## Step 4: Deploy
 
-Open **Actions → Deploy to AWS ECS → Run workflow** and choose **Run workflow**. The first run builds the Docker image and creates the network, S3 bucket, OpenSearch Serverless collection, ECS service, and load balancer. OpenSearch may take several minutes to become ready. Later runs publish a new image and update the service.
+Open **Actions → Deploy to AWS ECS (optional, paid) → Run workflow** and choose **Run workflow**. The first run builds the Docker image and creates the network, S3 bucket, OpenSearch Serverless collection, ECS service, and load balancer. OpenSearch may take several minutes to become ready. Later runs publish a new image and update the service.
 
 When the workflow completes, open its last step and copy the printed application URL. Open that address, then use **Document Ingestion** to upload the example PDFs from `sample_docs/` and ask a question.
 

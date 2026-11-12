@@ -1,8 +1,9 @@
-name: Deploy to AWS ECS
+# OPTIONAL and PAID. This only runs when you click "Run workflow" in the Actions tab.
+# It needs the AWS_ROLE_ARN secret (see DEPLOY.md) and creates billable AWS resources
+# (load balancer, Fargate, OpenSearch Serverless). For the free option, see DEPLOY-FREE.md.
+name: Deploy to AWS ECS (optional, paid)
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
