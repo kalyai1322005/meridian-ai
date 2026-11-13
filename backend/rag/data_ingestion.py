@@ -8,6 +8,8 @@ Two entry points share the same steps:
                             (local: .meridian/uploads/, cloud: the S3 bucket)
 """
 import hashlib
+import re
+import time
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
@@ -20,6 +22,44 @@ from rag.vector_store import get_vector_store
 
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 100  # neighbouring chunks share 100 characters so sentences are not cut off
+
+# The free Gemini tier allows ~100 embedding requests per minute (one per chunk).
+# We send chunks in small batches, pause between batches, and retry when Google says "slow down".
+BATCH_SIZE = 60
+PAUSE_BETWEEN_BATCHES = 40  # seconds
+MAX_RETRIES = 6
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    text = str(exc)
+    return "RESOURCE_EXHAUSTED" in text or "429" in text
+
+
+def _retry_delay(exc: Exception) -> float:
+    """Use Google's 'Please retry in 10.0s' hint when present, else wait a minute."""
+    match = re.search(r"retry in ([0-9.]+)s", str(exc))
+    return float(match.group(1)) + 2 if match else 60.0
+
+
+def _add_in_batches(chunks: list[Document], ids: list[str], source: str) -> None:
+    store = get_vector_store()
+    total = len(chunks)
+    for start in range(0, total, BATCH_SIZE):
+        batch, batch_ids = chunks[start:start + BATCH_SIZE], ids[start:start + BATCH_SIZE]
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                store.add_documents(batch, ids=batch_ids)
+                break
+            except Exception as exc:  # noqa: BLE001 - only rate limits are retried
+                if not _is_rate_limit(exc) or attempt == MAX_RETRIES:
+                    raise
+                delay = _retry_delay(exc)
+                log.warning("Embedding rate limit hit, waiting", source=source, seconds=delay, attempt=attempt)
+                time.sleep(delay)
+        done = min(start + BATCH_SIZE, total)
+        log.info("Embedded batch", source=source, done=done, total=total)
+        if done < total:
+            time.sleep(PAUSE_BETWEEN_BATCHES)
 
 
 def split_into_chunks(pages: list[Document]) -> list[Document]:
@@ -50,7 +90,7 @@ def ingest_pdf(local_path: str, source: str) -> dict:
     if chunks:
         log.info("Embedding chunks and adding to vector store", source=source, chunks=len(chunks))
         ids = [_chunk_id(c, i) for i, c in enumerate(chunks)]
-        get_vector_store().add_documents(chunks, ids=ids)
+        _add_in_batches(chunks, ids, source)
     return {"pages": len(pages), "chunks": len(chunks)}
 
 
