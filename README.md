@@ -9,7 +9,7 @@ It is built to **learn from**. The company in the examples, *Aldermoor Industrie
 
 > The "checks" in the audit are done by the AI from its general knowledge (only the exchange-rate check uses a live data source). This is a demo of how such a system is built, **not** a real compliance tool.
 
-> **Run it free:** no AWS and no credit card needed. Use local mode with a free Gemini key, or put it online on a free Hugging Face Space. See [DEPLOY-FREE.md](DEPLOY-FREE.md).
+> **Run it free:** no AWS and no credit card needed. Use local mode with a free Gemini key, or put it online on a free Render web service. See [DEPLOY-FREE.md](DEPLOY-FREE.md).
 >
 > **Optional paid cloud deployment:** the AWS version (ECS Fargate, Bedrock, OpenSearch Serverless) is documented in [DEPLOY.md](DEPLOY.md) and only runs when you start it by hand. Some learner notes in `docs/` still contain older Google Cloud examples.
 >

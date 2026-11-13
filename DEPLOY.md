@@ -1,6 +1,6 @@
 # Deploy Meridian AI to AWS (beginner guide)
 
-> **This path costs money.** For a free setup (Gemini free tier + Hugging Face Spaces) use [DEPLOY-FREE.md](DEPLOY-FREE.md). The AWS workflow only runs when you start it manually from the Actions tab.
+> **This path costs money.** For a free setup (Gemini free tier + Render) use [DEPLOY-FREE.md](DEPLOY-FREE.md). The AWS workflow only runs when you start it manually from the Actions tab.
 
 This project keeps its local mode and adds an AWS cloud mode. AWS hosts the app in ECS Fargate, stores PDFs and archived logs in S3, searches document vectors in OpenSearch Serverless, and runs chat and embedding models through Amazon Bedrock.
 
